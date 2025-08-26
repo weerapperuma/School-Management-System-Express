@@ -14,50 +14,50 @@ export const authController = {
     try {
       const { email, password } = req.body;
 
-      // Execute stored procedure to get user
-      const result = await executeStoredProcedure('sp_GetUserByEmail', [
-        { name: 'Email', type: sql.VarChar, value: email }
+      // First, get the user by email to check if they exist
+      const userResult = await executeStoredProcedure('sp_GetUserByEmail', [
+        { name: 'Email', type: sql.NVarChar, value: email }
       ]);
 
-      if (!result.recordset || result.recordset.length === 0) {
+      if (!userResult.recordset || userResult.recordset.length === 0) {
         throw new CustomError('Invalid credentials', 401);
       }
 
-      const user = result.recordset[0];
+      const user = userResult.recordset[0];
 
-      // Check if user is active
-      if (!user.IsActive) {
+      // Check if account is active (if IsActive column exists)
+      if (user.IsActive === false) {
         throw new CustomError('Account is deactivated', 401);
       }
 
       // Verify password
-      const isPasswordValid = await bcrypt.compare(password, user.Password);
+      const isPasswordValid = await bcrypt.compare(password, user.PasswordHash);
       if (!isPasswordValid) {
         throw new CustomError('Invalid credentials', 401);
       }
 
+      // Update last login
+      await executeStoredProcedure('sp_UpdateLastLogin', [
+        { name: 'UserID', type: sql.Int, value: user.UserID }
+      ]);
+
       // Generate tokens
       const accessToken = jwt.sign(
         {
-          id: user.Id,
+          id: user.UserID,
           email: user.Email,
           role: user.Role,
-          name: user.Name
+          name: user.FullName
         },
         process.env.JWT_SECRET!,
-        { expiresIn: process.env.JWT_EXPIRES_IN || '24h' }
+        { expiresIn: process.env.JWT_EXPIRES_IN || '24h' } as any
       );
 
       const refreshToken = jwt.sign(
-        { id: user.Id },
+        { id: user.UserID },
         process.env.JWT_SECRET!,
-        { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d' }
+        { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d' } as any
       );
-
-      // Update last login
-      await executeStoredProcedure('sp_UpdateLastLogin', [
-        { name: 'UserId', type: sql.UniqueIdentifier, value: user.Id }
-      ]);
 
       logger.info(`User ${user.Email} logged in successfully`);
 
@@ -65,8 +65,8 @@ export const authController = {
         success: true,
         data: {
           user: {
-            id: user.Id,
-            name: user.Name,
+            id: user.UserID,
+            name: user.FullName,
             email: user.Email,
             role: user.Role
           },
@@ -86,7 +86,7 @@ export const authController = {
 
       // Check if user already exists
       const existingUser = await executeStoredProcedure('sp_GetUserByEmail', [
-        { name: 'Email', type: sql.VarChar, value: email }
+        { name: 'Email', type: sql.NVarChar, value: email }
       ]);
 
       if (existingUser.recordset && existingUser.recordset.length > 0) {
@@ -100,30 +100,36 @@ export const authController = {
       const userId = uuidv4();
 
       // Execute stored procedure to create user
-      await executeStoredProcedure('sp_CreateUser', [
-        { name: 'Id', type: sql.UniqueIdentifier, value: userId },
-        { name: 'Name', type: sql.NVarChar, value: name },
-        { name: 'Email', type: sql.VarChar, value: email },
-        { name: 'Password', type: sql.VarChar, value: hashedPassword },
-        { name: 'Role', type: sql.VarChar, value: role }
+      await executeStoredProcedure('sp_RegisterUser', [
+        { name: 'FullName', type: sql.NVarChar, value: name },
+        { name: 'Email', type: sql.NVarChar, value: email },
+        { name: 'PasswordHash', type: sql.NVarChar, value: hashedPassword },
+        { name: 'Role', type: sql.NVarChar, value: role }
       ]);
+
+      // Get the created user to get the actual UserID
+      const createdUser = await executeStoredProcedure('sp_GetUserByEmail', [
+        { name: 'Email', type: sql.NVarChar, value: email }
+      ]);
+
+      const user = createdUser.recordset[0];
 
       // Generate tokens
       const accessToken = jwt.sign(
         {
-          id: userId,
+          id: user.UserID,
           email,
           role,
           name
         },
         process.env.JWT_SECRET!,
-        { expiresIn: process.env.JWT_EXPIRES_IN || '24h' }
+        { expiresIn: process.env.JWT_EXPIRES_IN || '24h' } as any
       );
 
       const refreshToken = jwt.sign(
-        { id: userId },
+        { id: user.UserID },
         process.env.JWT_SECRET!,
-        { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d' }
+        { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d' } as any
       );
 
       logger.info(`New user registered: ${email} with role: ${role}`);
@@ -132,7 +138,7 @@ export const authController = {
         success: true,
         data: {
           user: {
-            id: userId,
+            id: user.UserID,
             name,
             email,
             role
@@ -160,7 +166,7 @@ export const authController = {
 
       // Get user from database
       const result = await executeStoredProcedure('sp_GetUserById', [
-        { name: 'UserId', type: sql.UniqueIdentifier, value: decoded.id }
+        { name: 'UserID', type: sql.Int, value: decoded.id }
       ]);
 
       if (!result.recordset || result.recordset.length === 0) {
@@ -172,13 +178,13 @@ export const authController = {
       // Generate new access token
       const newAccessToken = jwt.sign(
         {
-          id: user.Id,
+          id: user.UserID,
           email: user.Email,
           role: user.Role,
-          name: user.Name
+          name: user.FullName
         },
         process.env.JWT_SECRET!,
-        { expiresIn: process.env.JWT_EXPIRES_IN || '24h' }
+        { expiresIn: process.env.JWT_EXPIRES_IN || '24h' } as any
       );
 
       res.status(200).json({
@@ -214,7 +220,7 @@ export const authController = {
       }
 
       const result = await executeStoredProcedure('sp_GetUserById', [
-        { name: 'UserId', type: sql.UniqueIdentifier, value: req.user.id }
+        { name: 'UserID', type: sql.Int, value: req.user.id }
       ]);
 
       if (!result.recordset || result.recordset.length === 0) {
@@ -227,8 +233,8 @@ export const authController = {
         success: true,
         data: {
           user: {
-            id: user.Id,
-            name: user.Name,
+            id: user.UserID,
+            name: user.FullName,
             email: user.Email,
             role: user.Role,
             createdAt: user.CreatedAt,

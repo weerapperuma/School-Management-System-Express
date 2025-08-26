@@ -35,7 +35,7 @@ export const authenticate = async (
     req.user = {
       id: decoded.id,
       email: decoded.email,
-      role: decoded.role,
+      role: decoded.role.toLowerCase(),
       name: decoded.name
     };
 
@@ -58,7 +58,7 @@ export const authorize = (...roles: string[]) => {
       return;
     }
 
-    if (!roles.includes(req.user.role)) {
+    if (!roles.map(r => r.toLowerCase()).includes(req.user.role)) {
       logger.warn(`Unauthorized access attempt by user ${req.user.id} with role ${req.user.role}`);
       next(new CustomError('Access denied. Insufficient permissions.', 403));
       return;
@@ -112,7 +112,7 @@ export const optionalAuth = async (
 // Rate limiting for authentication endpoints
 export const authRateLimit = {
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // limit each IP to 5 requests per windowMs
+  max: 20, // limit each IP to 20 requests per windowMs (increased for development)
   message: 'Too many authentication attempts, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,

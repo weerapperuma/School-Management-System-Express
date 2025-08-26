@@ -204,7 +204,8 @@ export const attendanceController = {
 
           results.push({ studentId: record.studentId, status: 'success' });
         } catch (error) {
-          errors.push({ studentId: record.studentId, error: error.message });
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          errors.push({ studentId: record.studentId, error: errorMessage });
         }
       }
 

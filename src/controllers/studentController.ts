@@ -295,7 +295,8 @@ export const studentController = {
 
           results.push({ email: studentData.email, status: 'success' });
         } catch (error) {
-          errors.push({ email: studentData.email, error: error.message });
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          errors.push({ email: studentData.email, error: errorMessage });
         }
       }
 
